@@ -47,7 +47,8 @@
                    (cons 'string-append string-append)
                    (cons 'string-length string-length)
                    (cons 'length length)
-                   (cons 'list? list?))))
+                   (cons 'list? list?)
+                   (cons 'remainder remainder))))
 
 ;; Interpreter
 
@@ -232,21 +233,23 @@
     [(? symbol? var) (hash-ref env var)]
     ;; Literals
     [(? lit?) e]
-    ;; TODO: implement multi-argument lambda. Right now this only
-    ;; handles single-argument lambda (throws away rest of arguments).
+    ;; TODO:✔ implement multi-argument lambda. Right now this only
+    ;; handles single-argument lambda (throws away rest of arguments). 
     [`(lambda (,vars ...) ,body)
      ;; Copy the environment mutably
-     (lambda (x) 
+     (lambda actual-args 
        (let ([env-copy (make-hash
                         (hash-map env
                                   (lambda (x y) (cons x y))))])
-         (hash-set! env-copy (first vars) x)         
+         (for ([i (length vars)]) 
+           (hash-set! env-copy (list-ref vars i) (list-ref actual-args i)))     
          (interp-hw1 body env-copy)))]
-    ;; TODO: implement let* correctly
-    [`(let* ([,(? symbol?) ,(? expr?)] ...)
+    ;; TODO:✔ implement let* correctly 
+    [`(let* (,@bindings)
         ,(? expr? body))
-     'undefined]
-    ;; TODO: handle multi-argument letrec (still only one f)
+     (let ([new-env (foldl (λ (binding env) (hash-set! env (first binding) (interp-hw1 (second binding) env)) env) env bindings)])
+     (interp-hw1 body new-env))]
+    ;; TODO:✔ handle multi-argument letrec (still only one f)
     [`(letrec ([,(? symbol? f) (lambda (,f-args ...) ,f-body)])
         ,(? expr? body))
      ;; Make a mutable copy of the hash table
@@ -257,10 +260,10 @@
        ;; rest of the arguments past the first...
        (hash-set! env-copy
                   f
-                  (lambda (x) (interp-hw1
+                  (lambda actual-args (interp-hw1
                                f-body
                                (begin
-                                 (hash-set! env-copy (first f-args) x)
+                                 (for ([i (length f-args)]) (hash-set! env-copy (list-ref f-args i) (list-ref actual-args i)))
                                  env-copy))))
        ;; Now interpret the body with this updated (mutable) env
        (interp-hw1 body env-copy))]
@@ -274,24 +277,25 @@
        ;; Take care to undersand this: it is the hint for how to
        ;; understand multi-arg evaluation.
        (apply (hash-ref builtins op) evaluated-args))]
-    ;; TODO. Compile a match statement. To implement this you should
+    ;; TODO:✔ Compile a match statement. To implement this you should
     ;; need only to change the implementation of `compile-match-stmts`
     ;; below.
     [`(match ,(? expr? e) [,match-patterns ,match-bodies] ...)
      (eval-match-statements match-patterns match-bodies (interp-hw1 e env) env)]
-    ;; TODO. Application: right now this only handles single-argument
-    ;; application (throws away the rest of e-args).
-    [`(,(? expr? e0) ,(? expr? e-args) ...)
-     ((interp-hw1 e0 env) (interp-hw1 (first e-args) env))]
     ;; If
     [`(if ,(? expr? guard)
           ,(? expr? etrue)
           ,(? expr? efalse)) 
      (if (interp-hw1 guard env)
          (interp-hw1 etrue env)
-         (interp-hw1 efalse env))]))
+         (interp-hw1 efalse env))]
+    ;; TODO.✔ Application: right now this only handles single-argument
+    ;; application (throws away the rest of e-args).
+    ;; I moved this after the if pattern, because the if syntax is the same as multi-arg application 
+    [`(,(? expr? e0) ,(? expr? e-args) ...)
+     (apply (interp-hw1 e0 env) (map (λ (e-arg) (interp-hw1 e-arg env)) e-args))]))
 
-;; TODO: extend this function.  Basic idea: translate each match
+;; TODO:✔ extend this function.  Basic idea: translate each match
 ;; pattern as a lambda that returns *either* an updated environment
 ;; that correctly binds the bodies (if it is successful) or returns
 ;; #f. Translate each match pattern into this function and then
@@ -306,7 +310,7 @@
     (match pattern
       [`(? ,predicate? ,var)
        (lambda (x) (if (begin
-                         (hash-set! env var x)
+                         (hash-set! env var x) ;; Doesn't mutating env here mess things up?
                          ((interp-hw1 predicate? env) x))
                        env
                        #f))]
@@ -322,7 +326,7 @@
       ;; solution in the next part should cover this case!)
       [`(list)
        (lambda (x) (and (list? x) (equal? (length x) 0)))]
-      ;; TODO. Fill in your answer here. This can nicely be done as
+      ;; TODO:✔ Fill in your answer here. This can nicely be done as
       ;; follows.
       ;;
       ;; HINTS:
@@ -337,7 +341,11 @@
       ;; index i and ith element of the list x. If it does, return
       ;; that updated environment. You can do this easily using foldl.
       [`(list ,patterns ...)
-       (lambda (x) #t)]))
+       (lambda (actual-list) (if (not (equal? (length actual-list) (length patterns)))
+                                 #f
+                                 (foldl (λ (pattern x prev-env) (if prev-env
+                                                    ((compile-match-statement pattern prev-env) x)
+                                                    #f)) env patterns actual-list)))]))
 
   ;; Recursively try each pattern in order until we find one that
   ;; applies. If there are no more patterns, throw an error.
@@ -368,11 +376,11 @@
     (let*-2 (let* ([x 0] [y (+ x 1)] [z (+ x y)]) (+ x y z)) 2)
     (let*-3 (let* ([x (lambda (y) y)] [x (lambda (z) 5)]) (x 4)) 5)
 
-    ;; TODO: Write two different examples here that use letrec with more
+    ;; TODO:✔ Write two different examples here that use letrec with more
     ;; than one argument. These should be small (but interesting)
     ;; recursive functions. You should write them in plain Racket first.
-    (letrec-multiarg-0 #t #t)
-    (letrec-multiarg-1 #t #t)
+    (letrec-multiarg-0 (letrec ([gcd (lambda (x y) (if (= (remainder x y) 0) y (gcd y (remainder x y))))]) (gcd 2160 3840)) 240)
+    (letrec-multiarg-1 (letrec ([pow (lambda (x y) (if (= y 0) 1 (* x (pow x (- y 1)))))]) (pow 2 10)) 1024)
     
     ;; Match statement examples    
     (match-0 (match 5
